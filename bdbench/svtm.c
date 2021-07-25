@@ -283,6 +283,7 @@ svtm_add_page(SVTm *store, const BlockNumber blkno,
 	uint32  nonzerocnt;
 	uint32  allzerocnt = 0, allonecnt = 0;
 	uint32  firstoff, lastoff;
+	uint32  spix1zero = 0;
 	uint32	i, j;
 	uint8  *append;
 	uint8	bitmap[BITMAP_PER_PAGE] = {0};
@@ -335,7 +336,7 @@ svtm_add_page(SVTm *store, const BlockNumber blkno,
 		}
 
 		/* if we could not abuse sparness of bitmap, pack it as is */
-		if (allzerocnt <= bmlen*5/8 && allonecnt <= bmlen*5/8)
+		if (allzerocnt <= bmlen/2 && allonecnt <= bmlen/2)
 		{
 			header |= MakeHeaderType(SVTH_rawBitmap);
 			memmove(append+1, bitmap, bmlen);
@@ -344,7 +345,7 @@ svtm_add_page(SVTm *store, const BlockNumber blkno,
 		else
 		{
 			/* if there is more present tuples than absent, invert map */
-			if (allonecnt > bmlen*5/8)
+			if (allonecnt > bmlen/2)
 			{
 				header |= MakeHeaderType(SVTH_inverseBitmap);
 				for (i = 0; i < bmlen; i++)
@@ -373,20 +374,28 @@ svtm_add_page(SVTm *store, const BlockNumber blkno,
 			}
 			Assert(j == nonzerocnt);
 
-			/* Then compress first level index with second level */
-			bbbmlen = (bbmlen+7)/8;
-			Assert(bbbmlen <= 3);
-			sbmlen = 0;
 			for (i = 0; i < bbmlen; i++)
+				spix1zero += spix1[i] == 0;
+
+			if (spix1zero > bbmlen/2)
 			{
-				if (spix1[i] != 0)
+				/* Then compress first level index with second level */
+				bbbmlen = (bbmlen+7)/8;
+				Assert(bbbmlen <= 3);
+				sbmlen = 0;
+				for (i = 0; i < bbmlen; i++)
 				{
-					spix2[makeoff(i, 8)] |= makebit(i, 8);
-					spix1[sbmlen] = spix1[i];
-					sbmlen++;
+					if (spix1[i] != 0)
+					{
+						spix2[makeoff(i, 8)] |= makebit(i, 8);
+						spix1[sbmlen] = spix1[i];
+						sbmlen++;
+					}
 				}
+				Assert(sbmlen < 19);
 			}
-			Assert(sbmlen < 19);
+			else
+				sbmlen = bbmlen;
 
 			/*
 			 * second byte contains length of first level and offset
@@ -594,14 +603,18 @@ svtm_lookup(SVTm *store, ItemPointer tid)
 			bitmap += 2;
 			bbmoff = makeoff(bmoff, 8);
 			bbmbit = makebit(bmoff, 8);
-			bbbmoff = makeoff(bbmoff, 8);
-			bbbmbit = makebit(bbmoff, 8);
-			/* check bit in second level index */
-			if ((bitmap[bbbmoff] & bbbmbit) == 0)
-				return inverse;
-			/* calculate sparse offset into compressed first level index */
-			six1off = pg_popcount((char*)bitmap, bbbmoff) +
-						svt_popcnt8(bitmap[bbbmoff] & (bbbmbit-1));
+			if (bbbmlen > 0) {
+				bbbmoff = makeoff(bbmoff, 8);
+				bbbmbit = makebit(bbmoff, 8);
+				/* check bit in second level index */
+				if ((bitmap[bbbmoff] & bbbmbit) == 0)
+					return inverse;
+				/* calculate sparse offset into compressed first level index */
+				six1off = pg_popcount((char*)bitmap, bbbmoff) +
+							svt_popcnt8(bitmap[bbbmoff] & (bbbmbit-1));
+			}
+			else
+				six1off = bbmoff;
 			/* check bit in first level index */
 			bbmbyte = bitmap[bbbmlen+six1off];
 			if ((bbmbyte & bbmbit) == 0)
