@@ -17,6 +17,7 @@ select 'tbm', attach_dead_tuples('tbm');
 select 'vtbm', attach_dead_tuples('vtbm');
 select 'radix', attach_dead_tuples('radix');
 select 'svtm', attach_dead_tuples('svtm');
+select 'intset2', attach_dead_tuples('intset2');
 
 -- Do benchmark of lazy_tid_reaped.
 select 'array bench', bench('array');
@@ -26,6 +27,7 @@ select 'tbm bench', bench('tbm');
 select 'vtbm bench', bench('vtbm');
 select 'radix', bench('radix');
 select 'svtm', bench('svtm');
+select 'intset2', bench('intset2');
 
 -- Check the memory usage.
 select * from pg_backend_memory_contexts where name ~ 'bench' or name = 'TopMemoryContext' order by name;

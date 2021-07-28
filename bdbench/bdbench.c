@@ -22,6 +22,7 @@
 #include "rtbm.h"
 #include "radix.h"
 #include "svtm.h"
+#include "integerset2.h"
 
 //#define DEBUG_DUMP_MATCHED 1
 
@@ -93,6 +94,7 @@ PG_FUNCTION_INFO_V1(bench);
 PG_FUNCTION_INFO_V1(test_generate_tid);
 PG_FUNCTION_INFO_V1(rtbm_test);
 PG_FUNCTION_INFO_V1(radix_run_tests);
+PG_FUNCTION_INFO_V1(intset2_run_tests);
 PG_FUNCTION_INFO_V1(prepare);
 
 /*
@@ -159,6 +161,14 @@ static bool svtm_reaped(LVTestType *lvtt, ItemPointer itemptr);
 static Size svtm_mem_usage(LVTestType *lvtt);
 static void svtm_load(SVTm *tbm, ItemPointerData *itemptrs, int nitems);
 
+/* intset2 */
+static void intset2_init(LVTestType *lvtt, uint64 nitems);
+static void intset2_fini(LVTestType *lvtt);
+static void intset2_attach(LVTestType *lvtt, uint64 nitems, BlockNumber minblk,
+						 BlockNumber maxblk, OffsetNumber maxoff);
+static bool intset2_reaped(LVTestType *lvtt, ItemPointer itemptr);
+static Size intset2_mem_usage(LVTestType *lvtt);
+
 
 /* Misc functions */
 static void generate_index_tuples(uint64 nitems, BlockNumber minblk,
@@ -185,7 +195,7 @@ static void load_rtbm(RTbm *vtbm, ItemPointerData *itemptrs, int nitems);
 		.mem_usage_fn = n##_mem_usage, \
 			}
 
-#define TEST_SUBJECT_TYPES 7
+#define TEST_SUBJECT_TYPES 8
 static LVTestType LVTestSubjects[TEST_SUBJECT_TYPES] =
 {
 	DECLARE_SUBJECT(array),
@@ -194,7 +204,8 @@ static LVTestType LVTestSubjects[TEST_SUBJECT_TYPES] =
 	DECLARE_SUBJECT(vtbm),
 	DECLARE_SUBJECT(rtbm),
 	DECLARE_SUBJECT(radix),
-	DECLARE_SUBJECT(svtm)
+	DECLARE_SUBJECT(svtm),
+	DECLARE_SUBJECT(intset2)
 };
 
 static bool
@@ -843,6 +854,69 @@ svtm_load(SVTm *svtm, ItemPointerData *itemptrs, int nitems)
 	svtm_finalize_addition(svtm);
 }
 
+/* ------------ intset2 ----------- */
+static void
+intset2_init(LVTestType *lvtt, uint64 nitems)
+{
+	MemoryContext old_ctx;
+
+	lvtt->mcxt = AllocSetContextCreate(TopMemoryContext,
+									   "intset2 bench",
+									   ALLOCSET_DEFAULT_SIZES);
+	old_ctx = MemoryContextSwitchTo(lvtt->mcxt);
+	lvtt->private = intset2_create();
+	MemoryContextSwitchTo(old_ctx);
+}
+
+static void
+intset2_fini(LVTestType *lvtt)
+{
+	if (lvtt->private != NULL)
+		intset2_free(lvtt->private);
+}
+
+static inline uint64
+intset2_encode(ItemPointer tid)
+{
+	uint64 tid_i;
+	uint32 shift = pg_ceil_log2_32(MaxHeapTuplesPerPage);
+
+	Assert(ItemPointerGetOffsetNumber(tid)>0);
+	tid_i = ItemPointerGetOffsetNumber(tid) - 1;
+	tid_i |= (uint64)ItemPointerGetBlockNumber(tid) << shift;
+
+	return tid_i;
+}
+
+static void
+intset2_attach(LVTestType *lvtt, uint64 nitems, BlockNumber minblk,
+			   BlockNumber maxblk, OffsetNumber maxoff)
+{
+	uint64 i;
+	MemoryContext oldcontext = MemoryContextSwitchTo(lvtt->mcxt);
+
+	for (i = 0; i < nitems; i++)
+	{
+		intset2_add_member(lvtt->private,
+				intset2_encode(DeadTuples_orig->itemptrs + i));
+	}
+
+	MemoryContextSwitchTo(oldcontext);
+}
+
+static bool
+intset2_reaped(LVTestType *lvtt, ItemPointer itemptr)
+{
+	return intset2_is_member(lvtt->private, intset2_encode(itemptr));
+}
+
+static uint64
+intset2_mem_usage(LVTestType *lvtt)
+{
+	//svtm_stats((SVTm *) lvtt->private);
+	return MemoryContextMemAllocated(lvtt->mcxt, true);
+}
+
 
 static void
 attach(LVTestType *lvtt, uint64 nitems, BlockNumber minblk, BlockNumber maxblk,
@@ -1226,6 +1300,14 @@ Datum
 radix_run_tests(PG_FUNCTION_ARGS)
 {
 	bfm_tests();
+
+	PG_RETURN_VOID();
+}
+
+Datum
+intset2_run_tests(PG_FUNCTION_ARGS)
+{
+	intset2_test_1();
 
 	PG_RETURN_VOID();
 }
