@@ -674,7 +674,7 @@ radix_to_key_off(ItemPointer tid, uint32 *off)
 	Assert(ItemPointerGetOffsetNumber(tid) < MaxHeapTuplesPerPage);
 
 	tid_i = ItemPointerGetOffsetNumber(tid);
-	tid_i |= ItemPointerGetBlockNumber(tid) << shift;
+	tid_i |= (uint64)ItemPointerGetBlockNumber(tid) << shift;
 
 	*off = tid_i & ((1 << ENCODE_BITS)-1);
 	upper = tid_i >> ENCODE_BITS;
